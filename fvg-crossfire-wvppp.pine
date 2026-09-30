@@ -1,9 +1,9 @@
-// This Pine Script® code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
-// ©fluxchart
+// This Pine Script code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// (c) fluxchart
 // Combined from two Flux Charts indicators:
 //   1) FVG Crossfire | Flux Charts
 //   2) Weighted Volume Profile Pivot Points | Flux Charts
-// Extra: "Zone + POC confluence" - a live Crossfire zone that contains the current profile POC gets a ◆POC tag + alert.
+// Extra: "Zone + POC confluence" - a live Crossfire zone that contains the current profile POC gets a [POC] tag + alert.
 
 //@version=6
 indicator("FVG Crossfire + WVPPP | Flux Charts", shorttitle = "FVG+WVPPP", overlay = true, max_boxes_count = 500, max_lines_count = 500, max_labels_count = 500, max_bars_back = 1005)
@@ -35,8 +35,8 @@ string grpMain = "Modules"
 bool enableCrossfire = input.bool(true, "FVG Crossfire", group = grpMain, display = disp)
 bool enableProfile = input.bool(true, "Weighted Volume Profile", group = grpMain, display = disp)
 
-string grpBase = "Crossfire · Base FVG"
-string grpZone = "Crossfire · Zone"
+string grpBase = "Crossfire - Base FVG"
+string grpZone = "Crossfire - Zone"
 string grpAlert = "Alerts"
 
 string fvgMitig = input.string("Close", "Base FVG mitigation", options = ["Wick", "Close"], tooltip = "How a waiting FVG gets filled: by wicks, or only by candle closes. A fully filled FVG can no longer create a zone.", group = grpBase, display = disp)
@@ -48,7 +48,7 @@ color bullFvgCol = input.color(color.new(#0ecb81, 86), "Bullish", tooltip = "Tra
 color bearFvgCol = input.color(color.new(#f6465d, 86), "Bearish", inline = "fvgCol", group = grpBase, display = disp)
 
 int lookback = input.int(3000, "Lookback (candles)", minval = 100, maxval = 10000, tooltip = "Only build FVGs and zones inside the most recent N candles. All zones born in this window are shown.", group = grpZone, display = disp)
-string zoneMitig = input.string("Close", "Zone mitigation", options = ["Wick", "Close"], tooltip = "A zone is finished when price trades through its far side — by wick, or only by close.", group = grpZone, display = disp)
+string zoneMitig = input.string("Close", "Zone mitigation", options = ["Wick", "Close"], tooltip = "A zone is finished when price trades through its far side - by wick, or only by close.", group = grpZone, display = disp)
 bool zoneBorder = input.bool(false, "Border", tooltip = "Show or hide the zone's outline.", inline = "zoneLine", group = grpZone, display = disp)
 string zoneStyle = input.string("Dotted", "Style", options = ["Solid", "Dashed", "Dotted"], inline = "zoneLine", group = grpZone, display = disp)
 bool showMid = input.bool(false, "Midline", inline = "mid", group = grpZone, display = disp)
@@ -60,15 +60,15 @@ bool combineZones = input.bool(false, "Combine overlapping zones", tooltip = "Me
 bool showMitigated = input.bool(true, "Show mitigated zones", tooltip = "Keep finished zones on the chart, faded out.", group = grpZone, display = disp)
 
 bool alertNew = input.bool(true, "New crossfire zone", tooltip = "Alerts when two opposite FVGs overlap and a new zone appears.", group = grpAlert, display = disp)
-bool alertFlip = input.bool(true, "Zone flipped", tooltip = "Alerts when a zone changes color (bullish ↔ bearish).", group = grpAlert, display = disp)
+bool alertFlip = input.bool(true, "Zone flipped", tooltip = "Alerts when a zone changes color (bullish <-> bearish).", group = grpAlert, display = disp)
 bool alertRetest = input.bool(false, "Zone retested", tooltip = "Alerts every time price re-enters a zone after leaving it.", group = grpAlert, display = disp)
 bool alertMitig = input.bool(false, "Zone mitigated", tooltip = "Alerts when a zone is finished.", group = grpAlert, display = disp)
 bool alertConf = input.bool(true, "Zone + POC confluence", tooltip = "Alerts when a live Crossfire zone starts containing the volume profile POC.", group = grpAlert, display = disp)
 
 // --- Volume profile inputs ---
-string grpGen = "Profile · General"
-string grpOB = "Profile · Order Blocks"
-string grpStyle = "Profile · Style"
+string grpGen = "Profile - General"
+string grpOB = "Profile - Order Blocks"
+string grpStyle = "Profile - Style"
 
 showPreviousSessions = input.bool(true, "Show Previous Sessions", group = grpGen, display = display.none)
 dbgMode = input.string("Order Blocks", "Mode", options = ["Pivots", "Order Blocks"], group = grpGen)
@@ -240,7 +240,7 @@ var bearishOrderBlocksList = array.new<orderBlockInfo>(0)
 var allOrderBlocksList = array.new<orderBlock>(0)
 //#endregion ARRAYS
 
-//#region FUNCTIONS · CROSSFIRE
+//#region FUNCTIONS - CROSSFIRE
 // Fills a base FVG on a delay so the move that strikes it can't erase it before the overlap test.
 lagMitigate(FVG f) =>
     if f.startBar < bar_index - snapBars
@@ -257,7 +257,7 @@ dimmed(color c) =>
     color.new(c, math.min(97, color.t(c) + 10))
 
 starText(int n) =>
-    n <= 4 ? str.repeat("★", n) + str.repeat("    ", n) : str.tostring(n) + " ★    "
+    n <= 4 ? str.repeat("*", n) + str.repeat("    ", n) : str.tostring(n) + " *    "
 
 // Grows a same-direction live zone to swallow an overlapping band; returns true if it merged.
 mergeZone(int dir, float t, float bot) =>
@@ -407,9 +407,9 @@ compactSegments() =>
             s = array.get(segs, i)
             if s.done and na(s.bx) and na(s.fvgFill)
                 array.remove(segs, i)
-//#endregion FUNCTIONS · CROSSFIRE
+//#endregion FUNCTIONS - CROSSFIRE
 
-//#region FUNCTIONS · PROFILE / ORDER BLOCKS
+//#region FUNCTIONS - PROFILE / ORDER BLOCKS
 createOrderBlock(orderBlockInfo orderBlockInfoF) =>
     orderBlock newOrderBlock = orderBlock.new(orderBlockInfoF)
     newOrderBlock
@@ -704,9 +704,9 @@ doIntersect(candleTop, candleBottom, rowType row) =>
 
 f_lin_interpolate(x0, y0, x1, y1, x) =>
     y0 + (x - x0) * (y1 - y0) / (x1 - x0)
-//#endregion FUNCTIONS · PROFILE / ORDER BLOCKS
+//#endregion FUNCTIONS - PROFILE / ORDER BLOCKS
 
-//#region CALCULATIONS · CROSSFIRE
+//#region CALCULATIONS - CROSSFIRE
 if barstate.isconfirmed and enableCrossfire
     dGap = timeframe.isintraday and (timeframe.change("D") or timeframe.change("D")[1])
     wGap = (timeframe.isintraday or timeframe.isdaily) and (timeframe.change("W") or timeframe.change("W")[1])
@@ -766,7 +766,7 @@ if barstate.isconfirmed and enableCrossfire
             if touch and not s.touching
                 evRetest := true
                 if retestMarks
-                    lb = label.new(bar_index, na, s.dir == 1 ? "▲" : "▼", xloc = xloc.bar_index, yloc = s.dir == 1 ? yloc.belowbar : yloc.abovebar, style = label.style_none, textcolor = color.new(s.dir == 1 ? bullZoneCol : bearZoneCol, 0), size = size.tiny)
+                    lb = label.new(bar_index, na, s.dir == 1 ? "^" : "v", xloc = xloc.bar_index, yloc = s.dir == 1 ? yloc.belowbar : yloc.abovebar, style = label.style_none, textcolor = color.new(s.dir == 1 ? bullZoneCol : bearZoneCol, 0), size = size.tiny)
                     array.push(s.retestLbs, lb)
                     if array.size(s.retestLbs) > maxRetestMarks
                         label.delete(array.shift(s.retestLbs))
@@ -778,9 +778,9 @@ if barstate.isconfirmed and enableCrossfire
     compactSegments()
     trimFvgs()
     trimSegments()
-//#endregion CALCULATIONS · CROSSFIRE
+//#endregion CALCULATIONS - CROSSFIRE
 
-//#region VISUALS · CROSSFIRE
+//#region VISUALS - CROSSFIRE
 if barstate.islast and enableCrossfire
     for s in segs
         if s.active and not s.done
@@ -797,9 +797,9 @@ if barstate.islast and enableCrossfire
                 label.set_xy(s.mark, bar_index, markY)
                 label.set_text(s.mark, txt)
                 label.set_textcolor(s.mark, color.new(zoneCol, 0))
-//#endregion VISUALS · CROSSFIRE
+//#endregion VISUALS - CROSSFIRE
 
-//#region CALCULATIONS · ORDER BLOCKS
+//#region CALCULATIONS - ORDER BLOCKS
 findOrderBlocks()
 
 [bullishOrderBlocksListTimeframe1, bearishOrderBlocksListTimeframe1] = getTFData(timeframeInfos.get(0), timeframe1)
@@ -807,9 +807,9 @@ findOrderBlocks()
 if barstate.isconfirmed
     handleTimeframeInfo(timeframeInfos.get(0), bullishOrderBlocksListTimeframe1, bearishOrderBlocksListTimeframe1)
     handleOrderBlocksFinal()
-//#endregion CALCULATIONS · ORDER BLOCKS
+//#endregion CALCULATIONS - ORDER BLOCKS
 
-//#region CALCULATIONS · PROFILE ANCHORS
+//#region CALCULATIONS - PROFILE ANCHORS
 var float validPivotHigh = na
 var float validPivotLow = na
 var int distanceToLastVP = 999
@@ -872,9 +872,9 @@ if pivotsChanged
     for x = 0 to rowCount - 1
         rowTop = pTop - step * x
         latestVolumeProfile.rows.set(x, rowType.new(rowTop, rowTop - step))
-//#endregion CALCULATIONS · PROFILE ANCHORS
+//#endregion CALCULATIONS - PROFILE ANCHORS
 
-//#region RENDER · PROFILE
+//#region RENDER - PROFILE
 var float maxVolumeSize = 0
 var float minVolumeSize = 0
 
@@ -989,10 +989,10 @@ if ((bar_index > last_bar_index - maxDistanceToLastBar and barstate.isconfirmed 
             latestVolumeProfile.POCLine := line.new(maxVolRow.endIndex, maxRowMid, bar_index, maxRowMid, extend = extend.right, width = POCLineWidth, color = POCLineColor, style = POCLineStyle == "____" ? line.style_solid : POCLineStyle == "----" ? line.style_dashed : line.style_dotted)
         else
             latestVolumeProfile.POCLine := line.new(bar_index, maxRowMid, maxVolRow.endIndex, maxRowMid, extend = extend.left, width = POCLineWidth, color = POCLineColor, style = POCLineStyle == "____" ? line.style_solid : POCLineStyle == "----" ? line.style_dashed : line.style_dotted)
-//#endregion RENDER · PROFILE
+//#endregion RENDER - PROFILE
 
-//#region CONFLUENCE · ZONE + POC
-// A live Crossfire zone that contains the current profile POC gets a ◆POC tag (and optionally an alert).
+//#region CONFLUENCE - ZONE + POC
+// A live Crossfire zone that contains the current profile POC gets a [POC] tag (and optionally an alert).
 if barstate.isconfirmed and enableCrossfire and enableProfile and not na(pocPrice)
     for s in segs
         if s.active and not s.done
@@ -1004,8 +1004,8 @@ if barstate.isconfirmed and enableCrossfire and enableProfile and not na(pocPric
 if barstate.islast and enableCrossfire and enableProfile
     for s in segs
         if s.active and not s.done and s.pocHit and not na(s.mark)
-            label.set_text(s.mark, label.get_text(s.mark) + " ◆POC")
-//#endregion CONFLUENCE · ZONE + POC
+            label.set_text(s.mark, label.get_text(s.mark) + " [POC]")
+//#endregion CONFLUENCE - ZONE + POC
 
 //#region ALERTS
 string alertSym = syminfo.ticker + " " + timeframe.period
