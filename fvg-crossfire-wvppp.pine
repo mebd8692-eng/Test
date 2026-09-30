@@ -1,0 +1,1100 @@
+// This Pine Script® code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// ©fluxchart
+// Combined from two Flux Charts indicators:
+//   1) FVG Crossfire | Flux Charts
+//   2) Weighted Volume Profile Pivot Points | Flux Charts
+// Extra: "Zone + POC confluence" - a live Crossfire zone that contains the current profile POC gets a ◆POC tag + alert.
+
+//@version=6
+indicator("FVG Crossfire + WVPPP | Flux Charts", shorttitle = "FVG+WVPPP", overlay = true, max_boxes_count = 500, max_lines_count = 500, max_labels_count = 500, max_bars_back = 1005)
+
+//#region CONSTANTS
+// --- Crossfire ---
+int snapBars = 3
+int maxFVGs = 80
+int maxSegments = 100 // lowered from 120: boxes are shared with the volume profile (500 total)
+int maxRetestMarks = 20
+disp = display.none
+// --- Volume profile ---
+const bool DEBUG = false
+const bool OBSettings = false
+const int maxBoxesCount = 500
+const int maxRowSize = 50
+const int priceBoxSize = 5
+const int v2Gap = 1
+const string v2TextSize = size.small
+const int edgeOffset = 25
+const int minDistance = 125
+const float overlapThresholdPercentage = 0
+const int maxDistanceToLastBar = 1750 // Affects Running Time
+const int maxOrderBlocks = 30
+//#endregion CONSTANTS
+
+//#region INPUTS
+string grpMain = "Modules"
+bool enableCrossfire = input.bool(true, "FVG Crossfire", group = grpMain, display = disp)
+bool enableProfile = input.bool(true, "Weighted Volume Profile", group = grpMain, display = disp)
+
+string grpBase = "Crossfire · Base FVG"
+string grpZone = "Crossfire · Zone"
+string grpAlert = "Alerts"
+
+string fvgMitig = input.string("Close", "Base FVG mitigation", options = ["Wick", "Close"], tooltip = "How a waiting FVG gets filled: by wicks, or only by candle closes. A fully filled FVG can no longer create a zone.", group = grpBase, display = disp)
+float minGap = input.float(0.0, "Min FVG gap (% of price)", minval = 0.0, step = 0.01, tooltip = "Skip tiny FVGs. 0 = keep every FVG.", group = grpBase, display = disp)
+bool showFunnel = input.bool(true, "Show origin funnel", tooltip = "Draw lines from the old FVG into its zone, showing where the zone came from.", group = grpBase, display = disp)
+bool fvgBorder = input.bool(false, "Border", tooltip = "Show or hide the funnel's edge lines.", inline = "fvgLine", group = grpBase, display = disp)
+string fvgStyle = input.string("Dotted", "Style", options = ["Solid", "Dashed", "Dotted"], inline = "fvgLine", group = grpBase, display = disp)
+color bullFvgCol = input.color(color.new(#0ecb81, 86), "Bullish", tooltip = "Transparency here sets the fill strength.", inline = "fvgCol", group = grpBase, display = disp)
+color bearFvgCol = input.color(color.new(#f6465d, 86), "Bearish", inline = "fvgCol", group = grpBase, display = disp)
+
+int lookback = input.int(3000, "Lookback (candles)", minval = 100, maxval = 10000, tooltip = "Only build FVGs and zones inside the most recent N candles. All zones born in this window are shown.", group = grpZone, display = disp)
+string zoneMitig = input.string("Close", "Zone mitigation", options = ["Wick", "Close"], tooltip = "A zone is finished when price trades through its far side — by wick, or only by close.", group = grpZone, display = disp)
+bool zoneBorder = input.bool(false, "Border", tooltip = "Show or hide the zone's outline.", inline = "zoneLine", group = grpZone, display = disp)
+string zoneStyle = input.string("Dotted", "Style", options = ["Solid", "Dashed", "Dotted"], inline = "zoneLine", group = grpZone, display = disp)
+bool showMid = input.bool(false, "Midline", inline = "mid", group = grpZone, display = disp)
+string midStyle = input.string("Dashed", "", options = ["Solid", "Dashed", "Dotted"], inline = "mid", group = grpZone, display = disp)
+color bullZoneCol = input.color(color.new(#0ecb81, 80), "Bullish", tooltip = "Transparency here sets the zone fill strength.", inline = "zoneCol", group = grpZone, display = disp)
+color bearZoneCol = input.color(color.new(#f6465d, 80), "Bearish", inline = "zoneCol", group = grpZone, display = disp)
+bool retestMarks = input.bool(true, "Retest markers", tooltip = "Draw a small arrow every time price re-enters a zone after leaving it.", group = grpZone, display = disp)
+bool combineZones = input.bool(false, "Combine overlapping zones", tooltip = "Merge overlapping zones of the same color into one bigger zone.", group = grpZone, display = disp)
+bool showMitigated = input.bool(true, "Show mitigated zones", tooltip = "Keep finished zones on the chart, faded out.", group = grpZone, display = disp)
+
+bool alertNew = input.bool(true, "New crossfire zone", tooltip = "Alerts when two opposite FVGs overlap and a new zone appears.", group = grpAlert, display = disp)
+bool alertFlip = input.bool(true, "Zone flipped", tooltip = "Alerts when a zone changes color (bullish ↔ bearish).", group = grpAlert, display = disp)
+bool alertRetest = input.bool(false, "Zone retested", tooltip = "Alerts every time price re-enters a zone after leaving it.", group = grpAlert, display = disp)
+bool alertMitig = input.bool(false, "Zone mitigated", tooltip = "Alerts when a zone is finished.", group = grpAlert, display = disp)
+bool alertConf = input.bool(true, "Zone + POC confluence", tooltip = "Alerts when a live Crossfire zone starts containing the volume profile POC.", group = grpAlert, display = disp)
+
+// --- Volume profile inputs ---
+string grpGen = "Profile · General"
+string grpOB = "Profile · Order Blocks"
+string grpStyle = "Profile · Style"
+
+showPreviousSessions = input.bool(true, "Show Previous Sessions", group = grpGen, display = display.none)
+dbgMode = input.string("Order Blocks", "Mode", options = ["Pivots", "Order Blocks"], group = grpGen)
+analyzeBars = input.int(200, "Analyze Bars", minval = 1, maxval = 1000, group = grpGen)
+rowCount = input.int(30, "Row Count", minval = 1, maxval = 1000, group = grpGen)
+volumeWeight = input.string("Normal", "Volume Weighting", ["Recent", "Normal", "Past"], group = grpGen, display = display.none)
+swingLen = input.int(10, "Swing Length", minval = 1, group = grpGen)
+keepOldPOC = input.bool(true, "Keep Past POC Lines", group = grpGen)
+
+intersectionBody = DEBUG ? input.bool(false, "[DBG] Intersection With Body", group = grpGen) : false
+
+// OB Settings
+showInvalidated = OBSettings ? input.bool(true, "Show Historic Zones", group = grpOB, display = display.none) : true
+OBRendering = OBSettings ? input.bool(true, "Show Order Blocks", group = grpOB, display = display.none) : false
+orderBlockVolumetricInfo = OBSettings ? input.bool(true, "Volumetric Info", group = grpOB, inline = "EV", display = display.none) : true
+obEndMethod = OBSettings ? input.string("Wick", "Zone Invalidation", options = ["Wick", "Close"], group = grpOB, display = display.none) : "Wick"
+combineOBs = DEBUG ? input.bool(true, "Combine Zones", group = grpOB, display = display.none) : true
+maxATRMult = DEBUG ? input.float(3.5, "Max Atr Multiplier", group = grpOB) : 3.5
+zoneCount = OBSettings ? input.string("Low", 'Zone Count', options = ["High", "Medium", "Low", "One"], tooltip = "Number of Order Block Zones to be rendered. Higher options will result in older Order Blocks shown.", group = grpOB, display = display.none) : "Low"
+bullOrderBlockColor = OBSettings ? input(#08998180, 'Bullish', inline = 'obColor', group = grpOB, display = display.none) : #08998180
+bearOrderBlockColor = OBSettings ? input(#f2364680, 'Bearish', inline = 'obColor', group = grpOB, display = display.none) : #f2364680
+
+bullishOrderBlocks = zoneCount == "One" ? 1 : zoneCount == "Low" ? 3 : zoneCount == "Medium" ? 5 : 10
+bearishOrderBlocks = zoneCount == "One" ? 1 : zoneCount == "Low" ? 3 : zoneCount == "Medium" ? 5 : 10
+
+timeframe1Enabled = true
+timeframe1 = ""
+
+highlightSessions = input.bool(true, "Highlight Sessions", group = grpStyle, display = display.none)
+dbgStyling = DEBUG ? input.string("v2", "[DBG] Styling", ["v1", "v2"], group = grpStyle, display = display.none) : "v2"
+alignSetting = input.string("Left", "Align To", options = ["Left", "Right"], group = grpStyle, display = display.none)
+POCEnabled = input.bool(true, "POC Line        ", inline = "POC", group = grpStyle, display = display.none)
+POCLineStyle = input.string("____", "    ", options = ["____", "----", "...."], group = grpStyle, inline = "POC", display = display.none)
+POCLineWidth = input.int(2, "", options = [1, 2, 3], group = grpStyle, inline = "POC", display = display.none)
+POCLineColor = input.color(color.yellow, "", group = grpStyle, inline = "POC", display = display.none)
+
+bullishColor = input.color(#089981, "Bullish", inline = "color", group = grpStyle, display = display.none)
+bearishColor = input.color(#f23646, "Bearish", inline = "color", group = grpStyle, display = display.none)
+textColor = input.color(#ffffff80, "Text Color", group = grpStyle)
+
+extendZonesBy = DEBUG ? input.int(15, "Extend Zones", group = grpStyle, minval = 1, maxval = 30, inline = "ExtendZones") : 15
+extendZonesDynamic = DEBUG ? input.bool(true, "Dynamic", group = grpStyle, inline = "ExtendZones") : true
+combinedText = DEBUG ? input.bool(false, "Combined Text", group = grpStyle, inline = "CombinedColor") : false
+volumeBarsPlace = DEBUG ? input.string("Left", "Show Volume Bars At", options = ["Left", "Right"], group = grpStyle, inline = "volumebars") : "Left"
+mirrorVolumeBars = DEBUG ? input.bool(true, "Mirror Volume Bars", group = grpStyle, inline = "volumebars") : true
+
+volumeBarsLeftSide = (volumeBarsPlace == "Left")
+extendZonesByTime = extendZonesBy * timeframe.in_seconds(timeframe.period) * 1000
+
+atr = ta.atr(10)
+//#endregion INPUTS
+
+//#region UDTs
+type FVG
+    int dir
+    float top
+    float bottom
+    float lagTop
+    float lagBottom
+    int startBar
+
+type Segment
+    int dir
+    float top
+    float bottom
+    int createBar
+    bool active
+    bool done
+    bool touching
+    int chainId
+    int flips
+    box bx
+    line fvgTop
+    line fvgBot
+    linefill fvgFill
+    line eq
+    label mark
+    array<label> retestLbs
+    bool pocHit = false
+
+type orderBlockInfo
+    float top
+    float bottom
+    float obVolume
+    string obType
+    int startTime
+    float bbVolume
+    float obLowVolume
+    float obHighVolume
+    bool breaker
+    int breakTime
+    string timeframeStr
+    bool disabled = false
+    string combinedTimeframesStr = na
+    bool combined = false
+
+type orderBlock
+    orderBlockInfo info
+    bool isRendered = false
+
+    box orderBox = na
+    box breakerBox = na
+
+    line orderBoxLineTop = na
+    line orderBoxLineBottom = na
+    line breakerBoxLineTop = na
+    line breakerBoxLineBottom = na
+    //
+    box orderBoxText = na
+    box orderBoxPositive = na
+    box orderBoxNegative = na
+
+    line orderSeperator = na
+    line orderTextSeperator = na
+
+type timeframeInfo
+    int index = na
+    string timeframeStr = na
+    bool isEnabled = false
+
+    orderBlockInfo[] bullishOrderBlocksList = na
+    orderBlockInfo[] bearishOrderBlocksList = na
+
+type obSwing
+    int x = na
+    float y = na
+    float swingVolume = na
+    bool crossed = false
+
+type rowType
+    float top
+    float bottom
+    int startIndex
+    int endIndex
+    float totalVolume = 0
+    float bullVolume = 0
+    float bearVolume = 0
+
+    box bullBox = na
+    box priceBox = na
+    box bearBox = na
+
+type volumeProfile
+    array<rowType> rows
+    line POCLine = na
+    box highlightBox = na
+    int edgeIndex = na
+    int startIndex = na
+    float vpTop = na
+    float vpBottom = na
+    int vpStart = na
+    int vpEnd = na
+//#endregion UDTs
+
+//#region VARIABLES
+bool fvgWick = fvgMitig == "Wick"
+bool zoneWick = zoneMitig == "Wick"
+fvgStyl = fvgStyle == "Solid" ? line.style_solid : fvgStyle == "Dashed" ? line.style_dashed : line.style_dotted
+zoneStyl = zoneStyle == "Solid" ? line.style_solid : zoneStyle == "Dashed" ? line.style_dashed : line.style_dotted
+midStyl = midStyle == "Solid" ? line.style_solid : midStyle == "Dashed" ? line.style_dashed : line.style_dotted
+var int chainSeq = 0
+bool evNew = false
+bool evFlip = false
+bool evRetest = false
+bool evMitig = false
+bool evConf = false
+var float pocPrice = na // latest volume-profile POC, shared with the Crossfire confluence check
+//#endregion VARIABLES
+
+//#region ARRAYS
+var array<FVG> fvgs = array.new<FVG>()
+var array<Segment> segs = array.new<Segment>()
+var bullishOrderBlocksList = array.new<orderBlockInfo>(0)
+var bearishOrderBlocksList = array.new<orderBlockInfo>(0)
+var allOrderBlocksList = array.new<orderBlock>(0)
+//#endregion ARRAYS
+
+//#region FUNCTIONS · CROSSFIRE
+// Fills a base FVG on a delay so the move that strikes it can't erase it before the overlap test.
+lagMitigate(FVG f) =>
+    if f.startBar < bar_index - snapBars
+        if f.dir == 1
+            sl = fvgWick ? low[snapBars] : close[snapBars]
+            if sl < f.lagTop
+                f.lagTop := math.max(sl, f.lagBottom)
+        else
+            sh = fvgWick ? high[snapBars] : close[snapBars]
+            if sh > f.lagBottom
+                f.lagBottom := math.min(sh, f.lagTop)
+
+dimmed(color c) =>
+    color.new(c, math.min(97, color.t(c) + 10))
+
+starText(int n) =>
+    n <= 4 ? str.repeat("★", n) + str.repeat("    ", n) : str.tostring(n) + " ★    "
+
+// Grows a same-direction live zone to swallow an overlapping band; returns true if it merged.
+mergeZone(int dir, float t, float bot) =>
+    merged = false
+    for s in segs
+        if s.active and not s.done and s.dir == dir and bot <= s.top and s.bottom <= t
+            s.top := math.max(s.top, t)
+            s.bottom := math.min(s.bottom, bot)
+            box.set_top(s.bx, s.top)
+            box.set_bottom(s.bx, s.bottom)
+            if not na(s.eq)
+                m = math.avg(s.top, s.bottom)
+                line.set_y1(s.eq, m)
+                line.set_y2(s.eq, m)
+            merged := true
+            break
+    merged
+
+// Builds the live box (+ optional midline) for a new zone segment and registers it.
+newSegment(int dir, float t, float bot, int cid, int flips, int handoff) =>
+    zoneCol = dir == 1 ? bullZoneCol : bearZoneCol
+    bordCol = zoneBorder ? color.new(zoneCol, 0) : color.new(zoneCol, 100)
+    bx = box.new(handoff, t, handoff, bot, border_color = bordCol, border_width = 1, border_style = zoneStyl, bgcolor = zoneCol, xloc = xloc.bar_index)
+    line eq = na
+    if showMid
+        m = math.avg(t, bot)
+        eq := line.new(handoff, m, handoff, m, xloc = xloc.bar_index, color = color.new(zoneCol, 0), width = 1, style = midStyl)
+    s = Segment.new(dir, t, bot, bar_index, true, false, false, cid, flips, bx, na, na, na, eq, na, array.new<label>())
+    array.push(segs, s)
+    s
+
+// Opens a brand-new crossfire chain from a base FVG and its opposite striker, with the origin funnel.
+makeChain(FVG a, FVG b, int cid) =>
+    t = math.min(a.lagTop, b.top)
+    bot = math.max(a.lagBottom, b.bottom)
+    made = false
+    created = false
+    if bot < t
+        made := true
+        if not (combineZones and mergeZone(b.dir, t, bot))
+            created := true
+            handoff = b.startBar - 1
+            s = newSegment(b.dir, t, bot, cid, 1, handoff)
+            if showFunnel
+                fvgCol = a.dir == 1 ? bullFvgCol : bearFvgCol
+                edgeCol = fvgBorder ? color.new(fvgCol, 0) : color.new(fvgCol, 100)
+                topAnchor = a.dir == 1 ? a.startBar : a.startBar - 2
+                botAnchor = a.dir == 1 ? a.startBar - 2 : a.startBar
+                s.fvgTop := line.new(topAnchor, a.top, handoff, t, xloc = xloc.bar_index, color = edgeCol, width = 1, style = fvgStyl)
+                s.fvgBot := line.new(botAnchor, a.bottom, handoff, bot, xloc = xloc.bar_index, color = edgeCol, width = 1, style = fvgStyl)
+                s.fvgFill := linefill.new(s.fvgTop, s.fvgBot, fvgCol)
+    [made, created]
+
+// Freezes the live segment at the strike bar and opens the flipped segment on the striker/zone overlap.
+flipSegment(Segment z, FVG b) =>
+    t = math.min(b.top, z.top)
+    bot = math.max(b.bottom, z.bottom)
+    did = false
+    if bot < t
+        did := true
+        handoff = b.startBar - 1
+        box.set_right(z.bx, handoff)
+        if not na(z.eq)
+            line.set_x2(z.eq, handoff)
+        if not na(z.mark)
+            label.delete(z.mark)
+            z.mark := na
+        z.active := false
+        newSegment(b.dir, t, bot, z.chainId, z.flips + 1, handoff)
+    did
+
+clearSegment(Segment s) =>
+    if not na(s.bx)
+        box.delete(s.bx)
+        s.bx := na
+    if not na(s.fvgFill)
+        linefill.delete(s.fvgFill)
+        s.fvgFill := na
+    if not na(s.fvgTop)
+        line.delete(s.fvgTop)
+        s.fvgTop := na
+    if not na(s.fvgBot)
+        line.delete(s.fvgBot)
+        s.fvgBot := na
+    if not na(s.eq)
+        line.delete(s.eq)
+        s.eq := na
+    if not na(s.mark)
+        label.delete(s.mark)
+        s.mark := na
+    for lb in s.retestLbs
+        label.delete(lb)
+    array.clear(s.retestLbs)
+
+// Fades every drawing of a segment once its chain is fully mitigated.
+dimSegment(Segment s) =>
+    zoneCol = s.dir == 1 ? bullZoneCol : bearZoneCol
+    fvgCol = s.dir == 1 ? bearFvgCol : bullFvgCol
+    if not na(s.bx)
+        box.set_bgcolor(s.bx, dimmed(zoneCol))
+        if zoneBorder
+            box.set_border_color(s.bx, color.new(zoneCol, 45))
+    if not na(s.eq)
+        line.set_color(s.eq, color.new(zoneCol, 45))
+    if not na(s.fvgFill)
+        linefill.set_color(s.fvgFill, dimmed(fvgCol))
+    if fvgBorder
+        if not na(s.fvgTop)
+            line.set_color(s.fvgTop, color.new(fvgCol, 45))
+        if not na(s.fvgBot)
+            line.set_color(s.fvgBot, color.new(fvgCol, 45))
+
+// Ends a whole chain: freeze & dim it (retest arrows removed), or wipe it, depending on the setting.
+finishChain(int cid) =>
+    for s in segs
+        if s.chainId == cid and not s.done
+            s.done := true
+            s.pocHit := false
+            if not na(s.mark)
+                label.delete(s.mark)
+                s.mark := na
+            if showMitigated
+                for lb in s.retestLbs
+                    label.delete(lb)
+                array.clear(s.retestLbs)
+                if s.active
+                    if not na(s.bx)
+                        box.set_right(s.bx, bar_index)
+                    if not na(s.eq)
+                        line.set_x2(s.eq, bar_index)
+                dimSegment(s)
+            else
+                clearSegment(s)
+            s.active := false
+
+trimFvgs() =>
+    while array.size(fvgs) > maxFVGs
+        array.shift(fvgs)
+
+trimSegments() =>
+    while array.size(segs) > maxSegments
+        clearSegment(array.shift(segs))
+
+compactSegments() =>
+    if array.size(segs) > 0
+        for i = array.size(segs) - 1 to 0
+            s = array.get(segs, i)
+            if s.done and na(s.bx) and na(s.fvgFill)
+                array.remove(segs, i)
+//#endregion FUNCTIONS · CROSSFIRE
+
+//#region FUNCTIONS · PROFILE / ORDER BLOCKS
+createOrderBlock(orderBlockInfo orderBlockInfoF) =>
+    orderBlock newOrderBlock = orderBlock.new(orderBlockInfoF)
+    newOrderBlock
+
+safeDeleteOrderBlock(orderBlock orderBlockF) =>
+    orderBlockF.isRendered := false
+
+    box.delete(orderBlockF.orderBox)
+    box.delete(orderBlockF.breakerBox)
+    box.delete(orderBlockF.orderBoxText)
+    box.delete(orderBlockF.orderBoxPositive)
+    box.delete(orderBlockF.orderBoxNegative)
+
+    line.delete(orderBlockF.orderBoxLineTop)
+    line.delete(orderBlockF.orderBoxLineBottom)
+    line.delete(orderBlockF.breakerBoxLineTop)
+    line.delete(orderBlockF.breakerBoxLineBottom)
+    line.delete(orderBlockF.orderSeperator)
+    line.delete(orderBlockF.orderTextSeperator)
+
+newTimeframeInfo(index, timeframeStr, isEnabled) =>
+    newTFInfo = timeframeInfo.new()
+    newTFInfo.index := index
+    newTFInfo.isEnabled := isEnabled
+    newTFInfo.timeframeStr := timeframeStr
+
+    newTFInfo
+
+var timeframeInfo[] timeframeInfos = array.from(newTimeframeInfo(1, timeframe1, timeframe1Enabled))
+
+moveLine(_line, _x, _y, _x2) =>
+    line.set_xy1(_line, _x, _y)
+    line.set_xy2(_line, _x2, _y)
+
+moveBox(_box, _topLeftX, _topLeftY, _bottomRightX, _bottomRightY) =>
+    box.set_lefttop(_box, _topLeftX, _topLeftY)
+    box.set_rightbottom(_box, _bottomRightX, _bottomRightY)
+
+isTimeframeLower(timeframe1F, timeframe2F) =>
+    timeframe.in_seconds(timeframe1F) < timeframe.in_seconds(timeframe2F)
+
+formatTimeframeString(formatTimeframe) =>
+    timeframeF = formatTimeframe == "" ? timeframe.period : formatTimeframe
+
+    if str.contains(timeframeF, "D") or str.contains(timeframeF, "W") or str.contains(timeframeF, "S") or str.contains(timeframeF, "M")
+        timeframeF
+    else
+        seconds = timeframe.in_seconds(timeframeF)
+        if seconds >= 3600
+            hourCount = int(seconds / 3600)
+            str.tostring(hourCount) + " Hour" + (hourCount > 1 ? "s" : "")
+        else
+            timeframeF + " Min"
+
+colorWithTransparency(colorF, transparencyX) =>
+    color.new(colorF, color.t(colorF) * transparencyX)
+
+createOBBox(boxColor, transparencyX = 1.0, xlocType = xloc.bar_time) =>
+    box.new(na, na, na, na, text_size = size.normal, xloc = xlocType, extend = extend.none, bgcolor = colorWithTransparency(boxColor, transparencyX), text_color = textColor, text_halign = text.align_center, border_color = #00000000)
+
+renderOrderBlock(orderBlock ob) =>
+    orderBlockInfo info = ob.info
+    ob.isRendered := true
+    orderColor = ob.info.obType == "Bull" ? bullOrderBlockColor : bearOrderBlockColor
+
+    if OBRendering and (not false or not (false and info.breaker)) and not (not showInvalidated and info.breaker)
+        ob.orderBox := createOBBox(orderColor, 1.5)
+        if ob.info.combined
+            ob.orderBox.set_bgcolor(colorWithTransparency(orderColor, 1.1))
+        ob.orderBoxText := createOBBox(color.new(color.white, 100))
+        if orderBlockVolumetricInfo
+            ob.orderBoxPositive := createOBBox(bullOrderBlockColor)
+            ob.orderBoxNegative := createOBBox(bearOrderBlockColor)
+            ob.orderSeperator := line.new(na, na, na, na, xloc.bar_time, extend.none, textColor, line.style_dashed, 1)
+            ob.orderTextSeperator := line.new(na, na, na, na, xloc.bar_time, extend.none, textColor, line.style_solid, 1)
+
+        zoneSize = extendZonesDynamic ? na(info.breakTime) ? extendZonesByTime : (info.breakTime - info.startTime) : extendZonesByTime
+        if na(info.breakTime)
+            zoneSize := (time + 1) - info.startTime
+
+        startX = volumeBarsLeftSide ? info.startTime : info.startTime + zoneSize - zoneSize / 3
+        maxEndX = volumeBarsLeftSide ? info.startTime + zoneSize / 3 : info.startTime + zoneSize
+
+        moveBox(ob.orderBox, info.startTime, info.top, info.startTime + zoneSize, info.bottom)
+        moveBox(ob.orderBoxText, volumeBarsLeftSide ? maxEndX : info.startTime, info.top, volumeBarsLeftSide ? info.startTime + zoneSize : startX, info.bottom)
+
+        percentage = int((math.min(info.obHighVolume, info.obLowVolume) / math.max(info.obHighVolume, info.obLowVolume)) * 100.0)
+        OBText = (na(ob.info.combinedTimeframesStr) ? formatTimeframeString(ob.info.timeframeStr) : ob.info.combinedTimeframesStr) + " OB"
+        box.set_text(ob.orderBoxText, (orderBlockVolumetricInfo ? str.tostring(ob.info.obVolume, format.volume) + " (" + str.tostring(percentage) + "%)\n" : "") + (combinedText and ob.info.combined ? "[Combined]\n" : "") + OBText)
+
+        if orderBlockVolumetricInfo
+            showHighLowBoxText = false
+
+            curEndXHigh = int(math.ceil((info.obHighVolume / info.obVolume) * (maxEndX - startX) + startX))
+            curEndXLow = int(math.ceil((info.obLowVolume / info.obVolume) * (maxEndX - startX) + startX))
+
+            moveBox(ob.orderBoxPositive, mirrorVolumeBars ? startX : curEndXLow, info.top, mirrorVolumeBars ? curEndXHigh : maxEndX, (info.bottom + info.top) / 2)
+            box.set_text(ob.orderBoxPositive, showHighLowBoxText ? str.tostring(info.obHighVolume, format.volume) : "")
+
+            moveBox(ob.orderBoxNegative, mirrorVolumeBars ? startX : curEndXHigh, info.bottom, mirrorVolumeBars ? curEndXLow : maxEndX, (info.bottom + info.top) / 2)
+            box.set_text(ob.orderBoxNegative, showHighLowBoxText ? str.tostring(info.obLowVolume, format.volume) : "")
+
+            moveLine(ob.orderSeperator, volumeBarsLeftSide ? startX : maxEndX, (info.bottom + info.top) / 2, volumeBarsLeftSide ? maxEndX : startX)
+
+            line.set_xy1(ob.orderTextSeperator, volumeBarsLeftSide ? maxEndX : startX, info.top)
+            line.set_xy2(ob.orderTextSeperator, volumeBarsLeftSide ? maxEndX : startX, info.bottom)
+
+findOBSwings(len) =>
+    var swingType = 0
+    var obSwing top = obSwing.new(na, na)
+    var obSwing bottom = obSwing.new(na, na)
+
+    upper = ta.highest(len)
+    lower = ta.lowest(len)
+
+    swingType := high[len] > upper ? 0 : low[len] < lower ? 1 : swingType
+
+    if swingType == 0 and swingType[1] != 0
+        top := obSwing.new(bar_index[len], high[len], volume[len])
+
+    if swingType == 1 and swingType[1] != 1
+        bottom := obSwing.new(bar_index[len], low[len], volume[len])
+
+    [top, bottom]
+
+findOrderBlocks() =>
+    if bar_index > last_bar_index - maxDistanceToLastBar and barstate.isconfirmed
+        [top, btm] = findOBSwings(swingLen)
+        useBody = false
+        max = useBody ? math.max(close, open) : high
+        min = useBody ? math.min(close, open) : low
+
+        // Bullish Order Block
+        bullishBreaked = 0
+
+        if bullishOrderBlocksList.size() > 0
+            for i = bullishOrderBlocksList.size() - 1 to 0
+                currentOB = bullishOrderBlocksList.get(i)
+
+                if not currentOB.breaker
+                    if (obEndMethod == "Wick" ? low : math.min(open, close)) < currentOB.bottom
+                        currentOB.breaker := true
+                        currentOB.breakTime := time
+                        currentOB.bbVolume := volume
+                else
+                    if high > currentOB.top
+                        bullishOrderBlocksList.remove(i)
+                    else if i < bullishOrderBlocks and top.y < currentOB.top and top.y > currentOB.bottom
+                        bullishBreaked := 1
+
+        if close > top.y and not top.crossed
+            top.crossed := true
+
+            boxBtm = max[1]
+            boxTop = min[1]
+            boxLoc = time[1]
+
+            for i = 1 to (bar_index - top.x) - 1
+                boxBtm := math.min(min[i], boxBtm)
+                boxTop := boxBtm == min[i] ? max[i] : boxTop
+                boxLoc := boxBtm == min[i] ? time[i] : boxLoc
+
+            newOrderBlockInfo = orderBlockInfo.new(boxTop, boxBtm, volume + volume[1] + volume[2], "Bull", boxLoc)
+            newOrderBlockInfo.obLowVolume := volume[2]
+            newOrderBlockInfo.obHighVolume := volume + volume[1]
+
+            obSize = math.abs(newOrderBlockInfo.top - newOrderBlockInfo.bottom)
+            if obSize <= atr * maxATRMult
+                bullishOrderBlocksList.unshift(newOrderBlockInfo)
+                if bullishOrderBlocksList.size() > maxOrderBlocks
+                    bullishOrderBlocksList.pop()
+
+        // Bearish Order Block
+
+        bearishBreaked = 0
+
+        if bearishOrderBlocksList.size() > 0
+            for i = bearishOrderBlocksList.size() - 1 to 0
+                currentOB = bearishOrderBlocksList.get(i)
+
+                if not currentOB.breaker
+                    if (obEndMethod == "Wick" ? high : math.max(open, close)) > currentOB.top
+                        currentOB.breaker := true
+                        currentOB.breakTime := time
+                        currentOB.bbVolume := volume
+                else
+                    if low < currentOB.bottom
+                        bearishOrderBlocksList.remove(i)
+                    else if i < bearishOrderBlocks and btm.y > currentOB.bottom and btm.y < currentOB.top
+                        bearishBreaked := 1
+
+        if close < btm.y and not btm.crossed
+            btm.crossed := true
+
+            boxBtm = min[1]
+            boxTop = max[1]
+            boxLoc = time[1]
+
+            for i = 1 to (bar_index - btm.x) - 1
+                boxTop := math.max(max[i], boxTop)
+                boxBtm := boxTop == max[i] ? min[i] : boxBtm
+                boxLoc := boxTop == max[i] ? time[i] : boxLoc
+
+            newOrderBlockInfo = orderBlockInfo.new(boxTop, boxBtm, volume + volume[1] + volume[2], "Bear", boxLoc)
+            newOrderBlockInfo.obLowVolume := volume + volume[1]
+            newOrderBlockInfo.obHighVolume := volume[2]
+
+            obSize = math.abs(newOrderBlockInfo.top - newOrderBlockInfo.bottom)
+            if obSize <= atr * maxATRMult
+                bearishOrderBlocksList.unshift(newOrderBlockInfo)
+                if bearishOrderBlocksList.size() > maxOrderBlocks
+                    bearishOrderBlocksList.pop()
+    true
+
+areaOfOB(orderBlockInfo OBInfoF) =>
+    float XA1 = OBInfoF.startTime
+    float XA2 = na(OBInfoF.breakTime) ? time + 1 : OBInfoF.breakTime
+    float YA1 = OBInfoF.top
+    float YA2 = OBInfoF.bottom
+    float edge1 = math.sqrt((XA2 - XA1) * (XA2 - XA1) + (YA2 - YA2) * (YA2 - YA2))
+    float edge2 = math.sqrt((XA2 - XA2) * (XA2 - XA2) + (YA2 - YA1) * (YA2 - YA1))
+    float totalArea = edge1 * edge2
+    totalArea
+
+doOBsTouch(orderBlockInfo OBInfo1, orderBlockInfo OBInfo2) =>
+    float XA1 = OBInfo1.startTime
+    float XA2 = na(OBInfo1.breakTime) ? time + 1 : OBInfo1.breakTime
+    float YA1 = OBInfo1.top
+    float YA2 = OBInfo1.bottom
+
+    float XB1 = OBInfo2.startTime
+    float XB2 = na(OBInfo2.breakTime) ? time + 1 : OBInfo2.breakTime
+    float YB1 = OBInfo2.top
+    float YB2 = OBInfo2.bottom
+    float intersectionArea = math.max(0, math.min(XA2, XB2) - math.max(XA1, XB1)) * math.max(0, math.min(YA1, YB1) - math.max(YA2, YB2))
+    float unionArea = areaOfOB(OBInfo1) + areaOfOB(OBInfo2) - intersectionArea
+
+    float overlapPercentage = (intersectionArea / unionArea) * 100.0
+
+    overlapPercentage > overlapThresholdPercentage
+
+isOBValid(orderBlockInfo OBInfo) =>
+    valid = true
+    if OBInfo.disabled
+        valid := false
+    valid
+
+combineOBsFunc() =>
+    if allOrderBlocksList.size() > 0
+        lastCombinations = 999
+        while lastCombinations > 0
+            lastCombinations := 0
+            for i = 0 to allOrderBlocksList.size() - 1
+                curOB1 = allOrderBlocksList.get(i)
+                for j = 0 to allOrderBlocksList.size() - 1
+                    curOB2 = allOrderBlocksList.get(j)
+                    if i == j
+                        continue
+                    if not isOBValid(curOB1.info) or not isOBValid(curOB2.info)
+                        continue
+                    if curOB1.info.obType != curOB2.info.obType
+                        continue
+                    if doOBsTouch(curOB1.info, curOB2.info)
+                        curOB1.info.disabled := true
+                        curOB2.info.disabled := true
+                        orderBlock newOB = createOrderBlock(orderBlockInfo.new(math.max(curOB1.info.top, curOB2.info.top), math.min(curOB1.info.bottom, curOB2.info.bottom), curOB1.info.obVolume + curOB2.info.obVolume, curOB1.info.obType))
+                        newOB.info.startTime := math.min(curOB1.info.startTime, curOB2.info.startTime)
+                        newOB.info.breakTime := math.max(nz(curOB1.info.breakTime), nz(curOB2.info.breakTime))
+                        newOB.info.breakTime := newOB.info.breakTime == 0 ? na : newOB.info.breakTime
+                        newOB.info.timeframeStr := curOB1.info.timeframeStr
+
+                        newOB.info.obVolume := curOB1.info.obVolume + curOB2.info.obVolume
+                        newOB.info.obLowVolume := curOB1.info.obLowVolume + curOB2.info.obLowVolume
+                        newOB.info.obHighVolume := curOB1.info.obHighVolume + curOB2.info.obHighVolume
+                        newOB.info.bbVolume := nz(curOB1.info.bbVolume, 0) + nz(curOB2.info.bbVolume, 0)
+                        newOB.info.breaker := curOB1.info.breaker or curOB2.info.breaker
+
+                        newOB.info.combined := true
+                        if timeframe.in_seconds(curOB1.info.timeframeStr) != timeframe.in_seconds(curOB2.info.timeframeStr)
+                            newOB.info.combinedTimeframesStr := (na(curOB1.info.combinedTimeframesStr) ? formatTimeframeString(curOB1.info.timeframeStr) : curOB1.info.combinedTimeframesStr) + " & " + (na(curOB2.info.combinedTimeframesStr) ? formatTimeframeString(curOB2.info.timeframeStr) : curOB2.info.combinedTimeframesStr)
+                        allOrderBlocksList.unshift(newOB)
+                        lastCombinations += 1
+
+reqSeq(timeframeStr) =>
+    [bullishOrderBlocksListF, bearishOrderBlocksListF] = request.security(syminfo.tickerid, timeframeStr, [bullishOrderBlocksList, bearishOrderBlocksList])
+    [bullishOrderBlocksListF, bearishOrderBlocksListF]
+
+getTFData(timeframeInfo timeframeInfoF, timeframeStr) =>
+    if not isTimeframeLower(timeframeInfoF.timeframeStr, timeframe.period) and timeframeInfoF.isEnabled
+        [bullishOrderBlocksListF, bearishOrderBlocksListF] = reqSeq(timeframeStr)
+        [bullishOrderBlocksListF, bearishOrderBlocksListF]
+    else
+        [na, na]
+
+handleTimeframeInfo(timeframeInfo timeframeInfoF, bullishOrderBlocksListF, bearishOrderBlocksListF) =>
+    if not isTimeframeLower(timeframeInfoF.timeframeStr, timeframe.period) and timeframeInfoF.isEnabled
+        timeframeInfoF.bullishOrderBlocksList := bullishOrderBlocksListF
+        timeframeInfoF.bearishOrderBlocksList := bearishOrderBlocksListF
+
+handleOrderBlocksFinal() =>
+    if allOrderBlocksList.size() > 0
+        for i = 0 to allOrderBlocksList.size() - 1
+            safeDeleteOrderBlock(allOrderBlocksList.get(i))
+    allOrderBlocksList.clear()
+
+    for i = 0 to timeframeInfos.size() - 1
+        curTimeframe = timeframeInfos.get(i)
+        if not curTimeframe.isEnabled
+            continue
+        if curTimeframe.bullishOrderBlocksList.size() > 0
+            for j = 0 to math.min(curTimeframe.bullishOrderBlocksList.size() - 1, bullishOrderBlocks - 1)
+                orderBlockInfoF = curTimeframe.bullishOrderBlocksList.get(j)
+                orderBlockInfoF.timeframeStr := curTimeframe.timeframeStr
+                allOrderBlocksList.unshift(createOrderBlock(orderBlockInfo.copy(orderBlockInfoF)))
+
+        if curTimeframe.bearishOrderBlocksList.size() > 0
+            for j = 0 to math.min(curTimeframe.bearishOrderBlocksList.size() - 1, bearishOrderBlocks - 1)
+                orderBlockInfoF = curTimeframe.bearishOrderBlocksList.get(j)
+                orderBlockInfoF.timeframeStr := curTimeframe.timeframeStr
+                allOrderBlocksList.unshift(createOrderBlock(orderBlockInfo.copy(orderBlockInfoF)))
+
+    if combineOBs
+        combineOBsFunc()
+
+    if allOrderBlocksList.size() > 0
+        for i = 0 to allOrderBlocksList.size() - 1
+            curOB = allOrderBlocksList.get(i)
+            if isOBValid(curOB.info)
+                renderOrderBlock(curOB)
+
+doIntersect(candleTop, candleBottom, rowType row) =>
+    if candleBottom > row.top
+        false
+    else if candleTop < row.bottom
+        false
+    else
+        true
+
+f_lin_interpolate(x0, y0, x1, y1, x) =>
+    y0 + (x - x0) * (y1 - y0) / (x1 - x0)
+//#endregion FUNCTIONS · PROFILE / ORDER BLOCKS
+
+//#region CALCULATIONS · CROSSFIRE
+if barstate.isconfirmed and enableCrossfire
+    dGap = timeframe.isintraday and (timeframe.change("D") or timeframe.change("D")[1])
+    wGap = (timeframe.isintraday or timeframe.isdaily) and (timeframe.change("W") or timeframe.change("W")[1])
+    blockGap = dGap or wGap
+    bool inWindow = last_bar_index - bar_index <= lookback
+
+    // Delayed fill of base FVGs; fully filled ones drop out of the candidate pool.
+    if array.size(fvgs) > 0
+        for i = array.size(fvgs) - 1 to 0
+            f = array.get(fvgs, i)
+            lagMitigate(f)
+            if f.lagTop <= f.lagBottom
+                array.remove(fvgs, i)
+
+    FVG newFvg = na
+    if not blockGap and inWindow
+        if low > high[2]
+            t = low
+            b = high[2]
+            if (t - b) / close * 100.0 >= minGap
+                newFvg := FVG.new(1, t, b, t, b, bar_index)
+        else if high < low[2]
+            t = low[2]
+            b = high
+            if (t - b) / close * 100.0 >= minGap
+                newFvg := FVG.new(-1, t, b, t, b, bar_index)
+
+    if not na(newFvg)
+        consumed = false
+
+        // The striker first flips any opposite live zone it overlaps...
+        nSeg = array.size(segs)
+        if nSeg > 0
+            for i = 0 to nSeg - 1
+                s = array.get(segs, i)
+                if s.active and not s.done and s.dir == -newFvg.dir
+                    if flipSegment(s, newFvg)
+                        consumed := true
+                        evFlip := true
+
+        // ...then strikes any remaining opposite base FVGs; a struck base is spent.
+        if array.size(fvgs) > 0
+            for i = array.size(fvgs) - 1 to 0
+                f = array.get(fvgs, i)
+                if f.dir == -newFvg.dir
+                    [made, created] = makeChain(f, newFvg, chainSeq)
+                    if created
+                        evNew := true
+                        chainSeq += 1
+                    if made
+                        consumed := true
+                        array.remove(fvgs, i)
+
+        // A striker that produced or flipped a zone is spent too; otherwise it waits as a base.
+        if not consumed
+            array.push(fvgs, newFvg)
+
+    // Retest + full mitigation of live zones. A retest fires every time price re-enters after being outside.
+    hiSrc = zoneWick ? high : close
+    loSrc = zoneWick ? low : close
+    for s in segs
+        if s.active and not s.done and s.createBar < bar_index
+            touch = high >= s.bottom and low <= s.top
+            if touch and not s.touching
+                evRetest := true
+                if retestMarks
+                    lb = label.new(bar_index, na, s.dir == 1 ? "▲" : "▼", xloc = xloc.bar_index, yloc = s.dir == 1 ? yloc.belowbar : yloc.abovebar, style = label.style_none, textcolor = color.new(s.dir == 1 ? bullZoneCol : bearZoneCol, 0), size = size.tiny)
+                    array.push(s.retestLbs, lb)
+                    if array.size(s.retestLbs) > maxRetestMarks
+                        label.delete(array.shift(s.retestLbs))
+            s.touching := touch
+            mitigated = s.dir == 1 ? loSrc <= s.bottom : hiSrc >= s.top
+            if mitigated
+                evMitig := true
+                finishChain(s.chainId)
+
+    compactSegments()
+    trimFvgs()
+    trimSegments()
+//#endregion CALCULATIONS · CROSSFIRE
+
+//#region VISUALS · CROSSFIRE
+if barstate.islast and enableCrossfire
+    for s in segs
+        if s.active and not s.done
+            if not na(s.bx)
+                box.set_right(s.bx, bar_index)
+            if not na(s.eq)
+                line.set_x2(s.eq, bar_index)
+            zoneCol = s.dir == 1 ? bullZoneCol : bearZoneCol
+            txt = s.dir == 1 ? "\n" + starText(s.flips) : starText(s.flips)
+            markY = s.dir == 1 ? s.bottom : s.top
+            if na(s.mark)
+                s.mark := label.new(bar_index, markY, txt, xloc = xloc.bar_index, style = label.style_none, textcolor = color.new(zoneCol, 0), size = size.small)
+            else
+                label.set_xy(s.mark, bar_index, markY)
+                label.set_text(s.mark, txt)
+                label.set_textcolor(s.mark, color.new(zoneCol, 0))
+//#endregion VISUALS · CROSSFIRE
+
+//#region CALCULATIONS · ORDER BLOCKS
+findOrderBlocks()
+
+[bullishOrderBlocksListTimeframe1, bearishOrderBlocksListTimeframe1] = getTFData(timeframeInfos.get(0), timeframe1)
+
+if barstate.isconfirmed
+    handleTimeframeInfo(timeframeInfos.get(0), bullishOrderBlocksListTimeframe1, bearishOrderBlocksListTimeframe1)
+    handleOrderBlocksFinal()
+//#endregion CALCULATIONS · ORDER BLOCKS
+
+//#region CALCULATIONS · PROFILE ANCHORS
+var float validPivotHigh = na
+var float validPivotLow = na
+var int distanceToLastVP = 999
+
+var volumeProfile latestVolumeProfile = na
+
+if not na(latestVolumeProfile)
+    distanceToLastVP := bar_index - latestVolumeProfile.vpStart
+
+pvHigh = ta.pivothigh(swingLen, swingLen)
+pvLow = ta.pivotlow(swingLen, swingLen)
+
+var float vph = na
+var float vpl = na
+
+vph := nz(pvHigh, vph)
+vpl := nz(pvLow, vpl)
+
+if dbgMode == "Pivots"
+    if distanceToLastVP > minDistance
+        validPivotHigh := vph
+        validPivotLow := vpl
+
+else if dbgMode == "Order Blocks"
+    if distanceToLastVP > minDistance
+        if bullishOrderBlocksList.size() > 0
+            curOB = bullishOrderBlocksList.get(0)
+            validPivotHigh := curOB.bottom
+
+        if bearishOrderBlocksList.size() > 0
+            curOB = bearishOrderBlocksList.get(0)
+            validPivotLow := curOB.top
+
+pivotsChanged = false
+
+if enableProfile and ((validPivotHigh != validPivotHigh[1]) or (validPivotLow != validPivotLow[1])) and (not na(validPivotHigh)) and (not na(validPivotLow)) and math.abs(validPivotHigh - validPivotLow) > atr * 5
+    pivotsChanged := true
+
+float pTop = validPivotHigh
+float pBottom = validPivotLow
+
+float step = (pTop - pBottom) / rowCount
+float gap = rowCount < 100 ? (step / 3.0) : 0
+
+var line oldLine = na
+var box oldBox = na
+var int latestEdgeIndex = na
+
+if pivotsChanged
+    if not na(latestVolumeProfile)
+        latestVolumeProfile.vpEnd := bar_index
+        oldBox := latestVolumeProfile.highlightBox
+        if not keepOldPOC
+            line.delete(latestVolumeProfile.POCLine)
+        latestEdgeIndex := latestVolumeProfile.edgeIndex
+        oldLine := latestVolumeProfile.POCLine
+
+    latestVolumeProfile := volumeProfile.new()
+    latestVolumeProfile.vpStart := bar_index
+    latestVolumeProfile.vpTop := pTop
+    latestVolumeProfile.vpBottom := pBottom
+    latestVolumeProfile.rows := array.new<rowType>(rowCount)
+    for x = 0 to rowCount - 1
+        rowTop = pTop - step * x
+        latestVolumeProfile.rows.set(x, rowType.new(rowTop, rowTop - step))
+//#endregion CALCULATIONS · PROFILE ANCHORS
+
+//#region RENDER · PROFILE
+var float maxVolumeSize = 0
+var float minVolumeSize = 0
+
+renderRow(startIndex, flip, rowType row) =>
+    totalSize = f_lin_interpolate(minVolumeSize, 1, maxVolumeSize, maxRowSize, row.totalVolume)
+    bullSize = nz(math.round((row.bullVolume / row.totalVolume) * totalSize), 0)
+    bearSize = nz(math.round((row.bearVolume / row.totalVolume) * totalSize), 0)
+    bullPercent = str.tostring(bullSize * 100.0 / totalSize, "#.##") + "%"
+    bearPercent = str.tostring(100.0 - str.tonumber(str.replace(bullPercent, "%", "")), "#.##") + "%"
+    rowPrice = (row.top + row.bottom) / 2.0
+
+    if dbgStyling == "v2"
+        row.startIndex := startIndex - bullSize
+        if flip
+            row.startIndex := startIndex + bullSize
+    else
+        row.startIndex := startIndex
+
+    row.endIndex := row.startIndex
+    if dbgStyling == "v1"
+        if bullSize + bearSize > 0
+            if not flip
+                row.endIndex := row.startIndex + bullSize + bearSize
+                row.bullBox := box.new(row.startIndex, row.top - gap / 2.0, row.startIndex + bullSize, row.bottom + gap / 2.0, bgcolor = bullishColor, border_color = color.black, border_width = 0)
+                if bearSize > 0
+                    row.bearBox := box.new(row.startIndex + bullSize, row.top - gap / 2.0, row.startIndex + bullSize + bearSize, row.bottom + gap / 2.0, bgcolor = bearishColor, border_color = color.black, border_width = 0)
+            else
+                row.endIndex := row.startIndex - bullSize - bearSize
+                row.bullBox := box.new(row.startIndex, row.top - gap / 2.0, row.startIndex - bullSize, row.bottom + gap / 2.0, bgcolor = bullishColor, border_color = color.black, border_width = 0)
+                if bearSize > 0
+                    row.bearBox := box.new(row.startIndex - bullSize, row.top - gap / 2.0, row.startIndex - bullSize - bearSize, row.bottom + gap / 2.0, bgcolor = bearishColor, border_color = color.black, border_width = 0)
+    else if dbgStyling == "v2"
+        if not flip
+            row.endIndex := row.startIndex + bullSize + v2Gap + priceBoxSize + v2Gap + bearSize
+            if bullSize > 0
+                row.bullBox := box.new(row.startIndex, row.top - gap / 2.0, row.startIndex + bullSize, row.bottom + gap / 2.0, text = bullPercent, text_size = v2TextSize, text_color = textColor, bgcolor = color.new(bullishColor, 50), border_color = bullishColor, border_width = 1)
+            row.priceBox := box.new(row.startIndex + bullSize + v2Gap, row.top - gap / 2.0, row.startIndex + bullSize + v2Gap + priceBoxSize, row.bottom + gap / 2.0, text = str.tostring(rowPrice, format.mintick), text_color = textColor, text_size = v2TextSize, bgcolor = color.new(color.blue, 50), border_width = 1)
+            if bearSize > 0
+                row.bearBox := box.new(row.startIndex + bullSize + v2Gap + priceBoxSize + v2Gap, row.top - gap / 2.0, row.startIndex + bullSize + v2Gap + priceBoxSize + v2Gap + bearSize, row.bottom + gap / 2.0, text = bearPercent, text_size = v2TextSize, text_color = textColor, bgcolor = color.new(bearishColor, 50), border_color = bearishColor, border_width = 1)
+        else
+            row.endIndex := row.startIndex - bullSize - v2Gap - priceBoxSize - v2Gap - bearSize
+            if bullSize > 0
+                row.bullBox := box.new(row.startIndex, row.top - gap / 2.0, row.startIndex - bullSize, row.bottom + gap / 2.0, text = bullPercent, text_size = v2TextSize, text_color = textColor, bgcolor = color.new(bullishColor, 50), border_color = bullishColor, border_width = 1)
+            row.priceBox := box.new(row.startIndex - bullSize - v2Gap, row.top - gap / 2.0, row.startIndex - bullSize - v2Gap - priceBoxSize, row.bottom + gap / 2.0, text = str.tostring(rowPrice, format.mintick), text_color = textColor, text_size = v2TextSize, bgcolor = color.new(color.blue, 50), border_width = 1)
+            if bearSize > 0
+                row.bearBox := box.new(row.startIndex - bullSize - v2Gap - priceBoxSize - v2Gap, row.top - gap / 2.0, row.startIndex - bullSize - v2Gap - priceBoxSize - v2Gap - bearSize, row.bottom + gap / 2.0, text = bearPercent, text_size = v2TextSize, text_color = textColor, bgcolor = color.new(bearishColor, 50), border_color = bearishColor, border_width = 1)
+
+curIndex = bar_index
+
+const float weightImpact = 0.85
+
+if ((bar_index > last_bar_index - maxDistanceToLastBar and barstate.isconfirmed and showPreviousSessions) or (barstate.islast and not showPreviousSessions)) and (not na(latestVolumeProfile))
+    for i = 0 to analyzeBars
+        for j = 0 to latestVolumeProfile.rows.size() - 1
+            curRow = latestVolumeProfile.rows.get(j)
+            vol = volume[i]
+
+            if volumeWeight == "Recent"
+                vol := ((vol * weightImpact) / (i + 1)) + (vol * (1.0 - weightImpact))
+
+            if volumeWeight == "Past"
+                vol := ((vol * weightImpact) * ((i + 1) / analyzeBars)) + (vol * (1.0 - weightImpact))
+
+            if doIntersect(intersectionBody ? math.max(open[i], close[i]) : high[i], intersectionBody ? math.min(open[i], close[i]) : low[i], curRow)
+                if close[i] > open[i]
+                    curRow.bullVolume += vol
+                else
+                    curRow.bearVolume += vol
+                curRow.totalVolume += vol
+    //
+    maxVolumeSize := 0
+    minVolumeSize := latestVolumeProfile.rows.get(0).totalVolume
+    rowType maxVolRow = na
+    for i = 0 to latestVolumeProfile.rows.size() - 1
+        curRow = latestVolumeProfile.rows.get(i)
+        maxVolumeSize := math.max(maxVolumeSize, curRow.totalVolume)
+        if curRow.totalVolume == maxVolumeSize
+            maxVolRow := curRow
+        minVolumeSize := math.min(minVolumeSize, curRow.totalVolume)
+
+    int startIndex = na
+    if alignSetting == "Left"
+        startIndex := (curIndex - analyzeBars + 1)
+        if not na(latestEdgeIndex)
+            startIndex := math.max(startIndex, latestEdgeIndex + edgeOffset)
+    else
+        startIndex := (curIndex + 75)
+        if not na(latestEdgeIndex)
+            startIndex := math.max(startIndex, latestEdgeIndex + 75)
+
+    latestVolumeProfile.startIndex := startIndex
+
+    for i = 0 to latestVolumeProfile.rows.size() - 1
+        curRow = latestVolumeProfile.rows.get(i)
+
+        box.delete(curRow.bearBox)
+        box.delete(curRow.priceBox)
+        box.delete(curRow.bullBox)
+        renderRow(startIndex, alignSetting == "Left" ? false : true, curRow)
+        if alignSetting == "Left"
+            latestVolumeProfile.edgeIndex := math.max(nz(latestVolumeProfile.edgeIndex, 0), curRow.endIndex)
+        else
+            latestVolumeProfile.edgeIndex := math.max(nz(latestVolumeProfile.edgeIndex, 0), curRow.startIndex)
+
+    if not na(oldLine)
+        oldLine.set_extend(extend.none)
+        if alignSetting == "Left"
+            oldLine.set_xy2(startIndex, oldLine.get_y2())
+        else
+            oldLine.set_xy1(latestEdgeIndex, oldLine.get_y2())
+            oldLine.set_xy2(latestVolumeProfile.edgeIndex, oldLine.get_y2())
+
+    if not na(oldBox)
+        oldBox.set_right(startIndex)
+
+    line.delete(latestVolumeProfile.POCLine)
+    box.delete(latestVolumeProfile.highlightBox)
+
+    if highlightSessions and alignSetting == "Left"
+        latestVolumeProfile.highlightBox := box.new(startIndex, latestVolumeProfile.vpTop, nz(latestVolumeProfile.vpEnd, bar_index), latestVolumeProfile.vpBottom, bgcolor = color.new(color.blue, 80), border_width = 0)
+
+    maxRowMid = (maxVolRow.top + maxVolRow.bottom) / 2.0
+    if maxVolRow.totalVolume > 0
+        pocPrice := maxRowMid
+    if POCEnabled and maxVolRow.totalVolume > 0
+        if alignSetting == "Left"
+            latestVolumeProfile.POCLine := line.new(maxVolRow.endIndex, maxRowMid, bar_index, maxRowMid, extend = extend.right, width = POCLineWidth, color = POCLineColor, style = POCLineStyle == "____" ? line.style_solid : POCLineStyle == "----" ? line.style_dashed : line.style_dotted)
+        else
+            latestVolumeProfile.POCLine := line.new(bar_index, maxRowMid, maxVolRow.endIndex, maxRowMid, extend = extend.left, width = POCLineWidth, color = POCLineColor, style = POCLineStyle == "____" ? line.style_solid : POCLineStyle == "----" ? line.style_dashed : line.style_dotted)
+//#endregion RENDER · PROFILE
+
+//#region CONFLUENCE · ZONE + POC
+// A live Crossfire zone that contains the current profile POC gets a ◆POC tag (and optionally an alert).
+if barstate.isconfirmed and enableCrossfire and enableProfile and not na(pocPrice)
+    for s in segs
+        if s.active and not s.done
+            bool hit = pocPrice <= s.top and pocPrice >= s.bottom
+            if hit and not s.pocHit
+                evConf := true
+            s.pocHit := hit
+
+if barstate.islast and enableCrossfire and enableProfile
+    for s in segs
+        if s.active and not s.done and s.pocHit and not na(s.mark)
+            label.set_text(s.mark, label.get_text(s.mark) + " ◆POC")
+//#endregion CONFLUENCE · ZONE + POC
+
+//#region ALERTS
+string alertSym = syminfo.ticker + " " + timeframe.period
+if alertNew and evNew
+    alert("FVG Crossfire [" + alertSym + "]: new crossfire zone formed.", alert.freq_once_per_bar)
+if alertFlip and evFlip
+    alert("FVG Crossfire [" + alertSym + "]: zone flipped direction.", alert.freq_once_per_bar)
+if alertRetest and evRetest
+    alert("FVG Crossfire [" + alertSym + "]: price retested a live zone.", alert.freq_once_per_bar)
+if alertMitig and evMitig
+    alert("FVG Crossfire [" + alertSym + "]: zone mitigated.", alert.freq_once_per_bar)
+if alertConf and evConf
+    alert("FVG Crossfire + WVPPP [" + alertSym + "]: live zone overlaps the volume profile POC.", alert.freq_once_per_bar)
+//#endregion ALERTS
