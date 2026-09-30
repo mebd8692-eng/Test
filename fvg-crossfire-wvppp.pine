@@ -1020,3 +1020,6 @@ if alertMitig and evMitig
 if alertConf and evConf
     alert("FVG Crossfire + WVPPP [" + alertSym + "]: live zone overlaps the volume profile POC.", alert.freq_once_per_bar)
 //#endregion ALERTS
+
+// Keeps the compiler happy (CE10246) even if no drawing is created on a bar.
+plot(pocPrice, "POC", color = color.new(color.yellow, 100), display = display.data_window)
