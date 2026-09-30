@@ -168,19 +168,15 @@ type orderBlockInfo
 type orderBlock
     orderBlockInfo info
     bool isRendered = false
-
     box orderBox = na
     box breakerBox = na
-
     line orderBoxLineTop = na
     line orderBoxLineBottom = na
     line breakerBoxLineTop = na
     line breakerBoxLineBottom = na
-    //
     box orderBoxText = na
     box orderBoxPositive = na
     box orderBoxNegative = na
-
     line orderSeperator = na
     line orderTextSeperator = na
 
@@ -188,7 +184,6 @@ type timeframeInfo
     int index = na
     string timeframeStr = na
     bool isEnabled = false
-
     orderBlockInfo[] bullishOrderBlocksList = na
     orderBlockInfo[] bearishOrderBlocksList = na
 
@@ -206,7 +201,6 @@ type rowType
     float totalVolume = 0
     float bullVolume = 0
     float bearVolume = 0
-
     box bullBox = na
     box priceBox = na
     box bearBox = na
@@ -422,13 +416,11 @@ createOrderBlock(orderBlockInfo orderBlockInfoF) =>
 
 safeDeleteOrderBlock(orderBlock orderBlockF) =>
     orderBlockF.isRendered := false
-
     box.delete(orderBlockF.orderBox)
     box.delete(orderBlockF.breakerBox)
     box.delete(orderBlockF.orderBoxText)
     box.delete(orderBlockF.orderBoxPositive)
     box.delete(orderBlockF.orderBoxNegative)
-
     line.delete(orderBlockF.orderBoxLineTop)
     line.delete(orderBlockF.orderBoxLineBottom)
     line.delete(orderBlockF.breakerBoxLineTop)
@@ -441,7 +433,6 @@ newTimeframeInfo(index, timeframeStr, isEnabled) =>
     newTFInfo.index := index
     newTFInfo.isEnabled := isEnabled
     newTFInfo.timeframeStr := timeframeStr
-
     newTFInfo
 
 var timeframeInfo[] timeframeInfos = array.from(newTimeframeInfo(1, timeframe1, timeframe1Enabled))
@@ -459,7 +450,6 @@ isTimeframeLower(timeframe1F, timeframe2F) =>
 
 formatTimeframeString(formatTimeframe) =>
     timeframeF = formatTimeframe == "" ? timeframe.period : formatTimeframe
-
     if str.contains(timeframeF, "D") or str.contains(timeframeF, "W") or str.contains(timeframeF, "S") or str.contains(timeframeF, "M")
         timeframeF
     else
@@ -480,7 +470,6 @@ renderOrderBlock(orderBlock ob) =>
     orderBlockInfo info = ob.info
     ob.isRendered := true
     orderColor = ob.info.obType == "Bull" ? bullOrderBlockColor : bearOrderBlockColor
-
     if OBRendering and (not false or not (false and info.breaker)) and not (not showInvalidated and info.breaker)
         ob.orderBox := createOBBox(orderColor, 1.5)
         if ob.info.combined
@@ -491,35 +480,25 @@ renderOrderBlock(orderBlock ob) =>
             ob.orderBoxNegative := createOBBox(bearOrderBlockColor)
             ob.orderSeperator := line.new(na, na, na, na, xloc.bar_time, extend.none, textColor, line.style_dashed, 1)
             ob.orderTextSeperator := line.new(na, na, na, na, xloc.bar_time, extend.none, textColor, line.style_solid, 1)
-
         zoneSize = extendZonesDynamic ? na(info.breakTime) ? extendZonesByTime : (info.breakTime - info.startTime) : extendZonesByTime
         if na(info.breakTime)
             zoneSize := (time + 1) - info.startTime
-
         startX = volumeBarsLeftSide ? info.startTime : info.startTime + zoneSize - zoneSize / 3
         maxEndX = volumeBarsLeftSide ? info.startTime + zoneSize / 3 : info.startTime + zoneSize
-
         moveBox(ob.orderBox, info.startTime, info.top, info.startTime + zoneSize, info.bottom)
         moveBox(ob.orderBoxText, volumeBarsLeftSide ? maxEndX : info.startTime, info.top, volumeBarsLeftSide ? info.startTime + zoneSize : startX, info.bottom)
-
         percentage = int((math.min(info.obHighVolume, info.obLowVolume) / math.max(info.obHighVolume, info.obLowVolume)) * 100.0)
         OBText = (na(ob.info.combinedTimeframesStr) ? formatTimeframeString(ob.info.timeframeStr) : ob.info.combinedTimeframesStr) + " OB"
         box.set_text(ob.orderBoxText, (orderBlockVolumetricInfo ? str.tostring(ob.info.obVolume, format.volume) + " (" + str.tostring(percentage) + "%)\n" : "") + (combinedText and ob.info.combined ? "[Combined]\n" : "") + OBText)
-
         if orderBlockVolumetricInfo
             showHighLowBoxText = false
-
             curEndXHigh = int(math.ceil((info.obHighVolume / info.obVolume) * (maxEndX - startX) + startX))
             curEndXLow = int(math.ceil((info.obLowVolume / info.obVolume) * (maxEndX - startX) + startX))
-
             moveBox(ob.orderBoxPositive, mirrorVolumeBars ? startX : curEndXLow, info.top, mirrorVolumeBars ? curEndXHigh : maxEndX, (info.bottom + info.top) / 2)
             box.set_text(ob.orderBoxPositive, showHighLowBoxText ? str.tostring(info.obHighVolume, format.volume) : "")
-
             moveBox(ob.orderBoxNegative, mirrorVolumeBars ? startX : curEndXHigh, info.bottom, mirrorVolumeBars ? curEndXLow : maxEndX, (info.bottom + info.top) / 2)
             box.set_text(ob.orderBoxNegative, showHighLowBoxText ? str.tostring(info.obLowVolume, format.volume) : "")
-
             moveLine(ob.orderSeperator, volumeBarsLeftSide ? startX : maxEndX, (info.bottom + info.top) / 2, volumeBarsLeftSide ? maxEndX : startX)
-
             line.set_xy1(ob.orderTextSeperator, volumeBarsLeftSide ? maxEndX : startX, info.top)
             line.set_xy2(ob.orderTextSeperator, volumeBarsLeftSide ? maxEndX : startX, info.bottom)
 
@@ -527,18 +506,13 @@ findOBSwings(len) =>
     var swingType = 0
     var obSwing top = obSwing.new(na, na)
     var obSwing bottom = obSwing.new(na, na)
-
     upper = ta.highest(len)
     lower = ta.lowest(len)
-
     swingType := high[len] > upper ? 0 : low[len] < lower ? 1 : swingType
-
     if swingType == 0 and swingType[1] != 0
         top := obSwing.new(bar_index[len], high[len], volume[len])
-
     if swingType == 1 and swingType[1] != 1
         bottom := obSwing.new(bar_index[len], low[len], volume[len])
-
     [top, bottom]
 
 findOrderBlocks() =>
@@ -547,14 +521,11 @@ findOrderBlocks() =>
         useBody = false
         max = useBody ? math.max(close, open) : high
         min = useBody ? math.min(close, open) : low
-
         // Bullish Order Block
         bullishBreaked = 0
-
         if bullishOrderBlocksList.size() > 0
             for i = bullishOrderBlocksList.size() - 1 to 0
                 currentOB = bullishOrderBlocksList.get(i)
-
                 if not currentOB.breaker
                     if (obEndMethod == "Wick" ? low : math.min(open, close)) < currentOB.bottom
                         currentOB.breaker := true
@@ -565,37 +536,28 @@ findOrderBlocks() =>
                         bullishOrderBlocksList.remove(i)
                     else if i < bullishOrderBlocks and top.y < currentOB.top and top.y > currentOB.bottom
                         bullishBreaked := 1
-
         if close > top.y and not top.crossed
             top.crossed := true
-
             boxBtm = max[1]
             boxTop = min[1]
             boxLoc = time[1]
-
             for i = 1 to (bar_index - top.x) - 1
                 boxBtm := math.min(min[i], boxBtm)
                 boxTop := boxBtm == min[i] ? max[i] : boxTop
                 boxLoc := boxBtm == min[i] ? time[i] : boxLoc
-
             newOrderBlockInfo = orderBlockInfo.new(boxTop, boxBtm, volume + volume[1] + volume[2], "Bull", boxLoc)
             newOrderBlockInfo.obLowVolume := volume[2]
             newOrderBlockInfo.obHighVolume := volume + volume[1]
-
             obSize = math.abs(newOrderBlockInfo.top - newOrderBlockInfo.bottom)
             if obSize <= atr * maxATRMult
                 bullishOrderBlocksList.unshift(newOrderBlockInfo)
                 if bullishOrderBlocksList.size() > maxOrderBlocks
                     bullishOrderBlocksList.pop()
-
         // Bearish Order Block
-
         bearishBreaked = 0
-
         if bearishOrderBlocksList.size() > 0
             for i = bearishOrderBlocksList.size() - 1 to 0
                 currentOB = bearishOrderBlocksList.get(i)
-
                 if not currentOB.breaker
                     if (obEndMethod == "Wick" ? high : math.max(open, close)) > currentOB.top
                         currentOB.breaker := true
@@ -606,23 +568,18 @@ findOrderBlocks() =>
                         bearishOrderBlocksList.remove(i)
                     else if i < bearishOrderBlocks and btm.y > currentOB.bottom and btm.y < currentOB.top
                         bearishBreaked := 1
-
         if close < btm.y and not btm.crossed
             btm.crossed := true
-
             boxBtm = min[1]
             boxTop = max[1]
             boxLoc = time[1]
-
             for i = 1 to (bar_index - btm.x) - 1
                 boxTop := math.max(max[i], boxTop)
                 boxBtm := boxTop == max[i] ? min[i] : boxBtm
                 boxLoc := boxTop == max[i] ? time[i] : boxLoc
-
             newOrderBlockInfo = orderBlockInfo.new(boxTop, boxBtm, volume + volume[1] + volume[2], "Bear", boxLoc)
             newOrderBlockInfo.obLowVolume := volume + volume[1]
             newOrderBlockInfo.obHighVolume := volume[2]
-
             obSize = math.abs(newOrderBlockInfo.top - newOrderBlockInfo.bottom)
             if obSize <= atr * maxATRMult
                 bearishOrderBlocksList.unshift(newOrderBlockInfo)
@@ -645,16 +602,13 @@ doOBsTouch(orderBlockInfo OBInfo1, orderBlockInfo OBInfo2) =>
     float XA2 = na(OBInfo1.breakTime) ? time + 1 : OBInfo1.breakTime
     float YA1 = OBInfo1.top
     float YA2 = OBInfo1.bottom
-
     float XB1 = OBInfo2.startTime
     float XB2 = na(OBInfo2.breakTime) ? time + 1 : OBInfo2.breakTime
     float YB1 = OBInfo2.top
     float YB2 = OBInfo2.bottom
     float intersectionArea = math.max(0, math.min(XA2, XB2) - math.max(XA1, XB1)) * math.max(0, math.min(YA1, YB1) - math.max(YA2, YB2))
     float unionArea = areaOfOB(OBInfo1) + areaOfOB(OBInfo2) - intersectionArea
-
     float overlapPercentage = (intersectionArea / unionArea) * 100.0
-
     overlapPercentage > overlapThresholdPercentage
 
 isOBValid(orderBlockInfo OBInfo) =>
@@ -686,13 +640,11 @@ combineOBsFunc() =>
                         newOB.info.breakTime := math.max(nz(curOB1.info.breakTime), nz(curOB2.info.breakTime))
                         newOB.info.breakTime := newOB.info.breakTime == 0 ? na : newOB.info.breakTime
                         newOB.info.timeframeStr := curOB1.info.timeframeStr
-
                         newOB.info.obVolume := curOB1.info.obVolume + curOB2.info.obVolume
                         newOB.info.obLowVolume := curOB1.info.obLowVolume + curOB2.info.obLowVolume
                         newOB.info.obHighVolume := curOB1.info.obHighVolume + curOB2.info.obHighVolume
                         newOB.info.bbVolume := nz(curOB1.info.bbVolume, 0) + nz(curOB2.info.bbVolume, 0)
                         newOB.info.breaker := curOB1.info.breaker or curOB2.info.breaker
-
                         newOB.info.combined := true
                         if timeframe.in_seconds(curOB1.info.timeframeStr) != timeframe.in_seconds(curOB2.info.timeframeStr)
                             newOB.info.combinedTimeframesStr := (na(curOB1.info.combinedTimeframesStr) ? formatTimeframeString(curOB1.info.timeframeStr) : curOB1.info.combinedTimeframesStr) + " & " + (na(curOB2.info.combinedTimeframesStr) ? formatTimeframeString(curOB2.info.timeframeStr) : curOB2.info.combinedTimeframesStr)
@@ -720,7 +672,6 @@ handleOrderBlocksFinal() =>
         for i = 0 to allOrderBlocksList.size() - 1
             safeDeleteOrderBlock(allOrderBlocksList.get(i))
     allOrderBlocksList.clear()
-
     for i = 0 to timeframeInfos.size() - 1
         curTimeframe = timeframeInfos.get(i)
         if not curTimeframe.isEnabled
@@ -730,16 +681,13 @@ handleOrderBlocksFinal() =>
                 orderBlockInfoF = curTimeframe.bullishOrderBlocksList.get(j)
                 orderBlockInfoF.timeframeStr := curTimeframe.timeframeStr
                 allOrderBlocksList.unshift(createOrderBlock(orderBlockInfo.copy(orderBlockInfoF)))
-
         if curTimeframe.bearishOrderBlocksList.size() > 0
             for j = 0 to math.min(curTimeframe.bearishOrderBlocksList.size() - 1, bearishOrderBlocks - 1)
                 orderBlockInfoF = curTimeframe.bearishOrderBlocksList.get(j)
                 orderBlockInfoF.timeframeStr := curTimeframe.timeframeStr
                 allOrderBlocksList.unshift(createOrderBlock(orderBlockInfo.copy(orderBlockInfoF)))
-
     if combineOBs
         combineOBsFunc()
-
     if allOrderBlocksList.size() > 0
         for i = 0 to allOrderBlocksList.size() - 1
             curOB = allOrderBlocksList.get(i)
@@ -764,7 +712,6 @@ if barstate.isconfirmed and enableCrossfire
     wGap = (timeframe.isintraday or timeframe.isdaily) and (timeframe.change("W") or timeframe.change("W")[1])
     blockGap = dGap or wGap
     bool inWindow = last_bar_index - bar_index <= lookback
-
     // Delayed fill of base FVGs; fully filled ones drop out of the candidate pool.
     if array.size(fvgs) > 0
         for i = array.size(fvgs) - 1 to 0
@@ -772,7 +719,6 @@ if barstate.isconfirmed and enableCrossfire
             lagMitigate(f)
             if f.lagTop <= f.lagBottom
                 array.remove(fvgs, i)
-
     FVG newFvg = na
     if not blockGap and inWindow
         if low > high[2]
@@ -785,10 +731,8 @@ if barstate.isconfirmed and enableCrossfire
             b = high
             if (t - b) / close * 100.0 >= minGap
                 newFvg := FVG.new(-1, t, b, t, b, bar_index)
-
     if not na(newFvg)
         consumed = false
-
         // The striker first flips any opposite live zone it overlaps...
         nSeg = array.size(segs)
         if nSeg > 0
@@ -798,7 +742,6 @@ if barstate.isconfirmed and enableCrossfire
                     if flipSegment(s, newFvg)
                         consumed := true
                         evFlip := true
-
         // ...then strikes any remaining opposite base FVGs; a struck base is spent.
         if array.size(fvgs) > 0
             for i = array.size(fvgs) - 1 to 0
@@ -811,11 +754,9 @@ if barstate.isconfirmed and enableCrossfire
                     if made
                         consumed := true
                         array.remove(fvgs, i)
-
         // A striker that produced or flipped a zone is spent too; otherwise it waits as a base.
         if not consumed
             array.push(fvgs, newFvg)
-
     // Retest + full mitigation of live zones. A retest fires every time price re-enters after being outside.
     hiSrc = zoneWick ? high : close
     loSrc = zoneWick ? low : close
@@ -834,7 +775,6 @@ if barstate.isconfirmed and enableCrossfire
             if mitigated
                 evMitig := true
                 finishChain(s.chainId)
-
     compactSegments()
     trimFvgs()
     trimSegments()
@@ -892,13 +832,11 @@ if dbgMode == "Pivots"
     if distanceToLastVP > minDistance
         validPivotHigh := vph
         validPivotLow := vpl
-
 else if dbgMode == "Order Blocks"
     if distanceToLastVP > minDistance
         if bullishOrderBlocksList.size() > 0
             curOB = bullishOrderBlocksList.get(0)
             validPivotHigh := curOB.bottom
-
         if bearishOrderBlocksList.size() > 0
             curOB = bearishOrderBlocksList.get(0)
             validPivotLow := curOB.top
@@ -926,7 +864,6 @@ if pivotsChanged
             line.delete(latestVolumeProfile.POCLine)
         latestEdgeIndex := latestVolumeProfile.edgeIndex
         oldLine := latestVolumeProfile.POCLine
-
     latestVolumeProfile := volumeProfile.new()
     latestVolumeProfile.vpStart := bar_index
     latestVolumeProfile.vpTop := pTop
@@ -948,14 +885,12 @@ renderRow(startIndex, flip, rowType row) =>
     bullPercent = str.tostring(bullSize * 100.0 / totalSize, "#.##") + "%"
     bearPercent = str.tostring(100.0 - str.tonumber(str.replace(bullPercent, "%", "")), "#.##") + "%"
     rowPrice = (row.top + row.bottom) / 2.0
-
     if dbgStyling == "v2"
         row.startIndex := startIndex - bullSize
         if flip
             row.startIndex := startIndex + bullSize
     else
         row.startIndex := startIndex
-
     row.endIndex := row.startIndex
     if dbgStyling == "v1"
         if bullSize + bearSize > 0
@@ -994,20 +929,16 @@ if ((bar_index > last_bar_index - maxDistanceToLastBar and barstate.isconfirmed 
         for j = 0 to latestVolumeProfile.rows.size() - 1
             curRow = latestVolumeProfile.rows.get(j)
             vol = volume[i]
-
             if volumeWeight == "Recent"
                 vol := ((vol * weightImpact) / (i + 1)) + (vol * (1.0 - weightImpact))
-
             if volumeWeight == "Past"
                 vol := ((vol * weightImpact) * ((i + 1) / analyzeBars)) + (vol * (1.0 - weightImpact))
-
             if doIntersect(intersectionBody ? math.max(open[i], close[i]) : high[i], intersectionBody ? math.min(open[i], close[i]) : low[i], curRow)
                 if close[i] > open[i]
                     curRow.bullVolume += vol
                 else
                     curRow.bearVolume += vol
                 curRow.totalVolume += vol
-    //
     maxVolumeSize := 0
     minVolumeSize := latestVolumeProfile.rows.get(0).totalVolume
     rowType maxVolRow = na
@@ -1017,7 +948,6 @@ if ((bar_index > last_bar_index - maxDistanceToLastBar and barstate.isconfirmed 
         if curRow.totalVolume == maxVolumeSize
             maxVolRow := curRow
         minVolumeSize := math.min(minVolumeSize, curRow.totalVolume)
-
     int startIndex = na
     if alignSetting == "Left"
         startIndex := (curIndex - analyzeBars + 1)
@@ -1027,12 +957,9 @@ if ((bar_index > last_bar_index - maxDistanceToLastBar and barstate.isconfirmed 
         startIndex := (curIndex + 75)
         if not na(latestEdgeIndex)
             startIndex := math.max(startIndex, latestEdgeIndex + 75)
-
     latestVolumeProfile.startIndex := startIndex
-
     for i = 0 to latestVolumeProfile.rows.size() - 1
         curRow = latestVolumeProfile.rows.get(i)
-
         box.delete(curRow.bearBox)
         box.delete(curRow.priceBox)
         box.delete(curRow.bullBox)
@@ -1041,7 +968,6 @@ if ((bar_index > last_bar_index - maxDistanceToLastBar and barstate.isconfirmed 
             latestVolumeProfile.edgeIndex := math.max(nz(latestVolumeProfile.edgeIndex, 0), curRow.endIndex)
         else
             latestVolumeProfile.edgeIndex := math.max(nz(latestVolumeProfile.edgeIndex, 0), curRow.startIndex)
-
     if not na(oldLine)
         oldLine.set_extend(extend.none)
         if alignSetting == "Left"
@@ -1049,16 +975,12 @@ if ((bar_index > last_bar_index - maxDistanceToLastBar and barstate.isconfirmed 
         else
             oldLine.set_xy1(latestEdgeIndex, oldLine.get_y2())
             oldLine.set_xy2(latestVolumeProfile.edgeIndex, oldLine.get_y2())
-
     if not na(oldBox)
         oldBox.set_right(startIndex)
-
     line.delete(latestVolumeProfile.POCLine)
     box.delete(latestVolumeProfile.highlightBox)
-
     if highlightSessions and alignSetting == "Left"
         latestVolumeProfile.highlightBox := box.new(startIndex, latestVolumeProfile.vpTop, nz(latestVolumeProfile.vpEnd, bar_index), latestVolumeProfile.vpBottom, bgcolor = color.new(color.blue, 80), border_width = 0)
-
     maxRowMid = (maxVolRow.top + maxVolRow.bottom) / 2.0
     if maxVolRow.totalVolume > 0
         pocPrice := maxRowMid
