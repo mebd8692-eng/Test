@@ -7,6 +7,7 @@
 
 //@version=6
 indicator("FVG Crossfire + WVPPP | Flux Charts", shorttitle = "FVG+WVPPP", overlay = true, max_boxes_count = 500, max_lines_count = 500, max_labels_count = 500, max_bars_back = 1005)
+plot(close, "Close", color = color.new(color.gray, 100), display = display.none) // required output (CE10246)
 
 //#region CONSTANTS
 // --- Crossfire ---
@@ -1020,6 +1021,3 @@ if alertMitig and evMitig
 if alertConf and evConf
     alert("FVG Crossfire + WVPPP [" + alertSym + "]: live zone overlaps the volume profile POC.", alert.freq_once_per_bar)
 //#endregion ALERTS
-
-// Keeps the compiler happy (CE10246) even if no drawing is created on a bar.
-plot(pocPrice, "POC", color = color.new(color.yellow, 100), display = display.data_window)
